@@ -1,0 +1,133 @@
+---
+title: "NYTimes API"
+output: html_notebook
+---
+
+
+
+```{r}
+#load libraries
+library(jsonlite)
+library(dplyr)
+library(RJSONIO)
+library (RCurl)
+library(ggplot2)
+
+NYTIMES_KEY="xxxx"
+term <- "science"
+
+#initial querry
+begin_date <- "20180101"
+end_date <- "20180429"
+
+baseurl <- paste("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=",
+                 term,"&begin_date=",begin_date,"&end_date=",end_date,"&facet_filter=true&api-key=",NYTIMES_KEY, sep="")
+
+initialQuery <- fromJSON(baseurl)
+maxPages <- round((initialQuery$response$meta$hits[1] / 10)-1)
+pages <- list()
+for(i in 0:maxPages){
+  nytSearch <- fromJSON(paste0(baseurl, "&page=", i), flatten = TRUE) %>% data.frame()
+  message("Retrieving page ", i)
+  pages[[i+1]] <- nytSearch
+  Sys.sleep(1)
+}
+NYTSearchThisYear <- rbind_pages(pages)
+
+#Distribution of Articles
+NYTSearchThisYear  %>% 
+  group_by(response.docs.type_of_material) %>%
+  summarize(count=n()) %>%
+  mutate(percent = (count / sum(count))*100) %>%
+  ggplot() +
+  geom_bar(aes(y=percent, x=response.docs.type_of_material, fill=response.docs.type_of_material), stat = "identity") + coord_flip()
+
+```
+```{r}
+#Distribution per date
+NYTSearchThisYear %>%
+  mutate(pubDay=gsub("T.*","",response.docs.pub_date)) %>%
+  group_by(pubDay) %>%
+  summarise(count=n()) %>%
+  #filter(count >= 2) %>%
+  ggplot() +
+  geom_bar(aes(x=pubDay, y=count), stat="identity") + coord_flip()
+```
+ Unusually high number of mentions?
+ 
+```{r}
+begin_date <- "20080101"
+end_date <- "20180429"
+baseurl <- paste("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=",
+                 term, "&begin_date=",begin_date,"&end_date=",end_date,
+                  "&facet_filter=true&api-key=",NYTIMES_KEY, sep="")
+
+secondQuery <- fromJSON(baseurl)
+maxPages <- round((secondQuery$response$meta$hits[1] / 10)-1)
+pages <- list()
+for(i in 0:maxPages){
+  nytSearch <- fromJSON(paste0(baseurl, "&page=", i), flatten = TRUE) %>% data.frame()
+  message("Retrieving page ", i)
+  pages[[i+1]] <- nytSearch
+  Sys.sleep(1)
+}
+allNYTSearch <- rbind_pages(pages)
+
+#Distribution per date (not_ordered)
+allNYTSearch %>%
+  mutate(pubDay=gsub("T.*","",response.docs.pub_date)) %>%
+  group_by(pubDay) %>%
+  summarise(count=n()) %>%
+  #filter(count >= 2) %>%
+  ggplot() +
+  geom_bar(aes(x=pubDay, y=count), stat="identity") + coord_flip()
+```
+Most recent dates are the top - even legend isn't legible. Increased mention of science? 
+Retrieve mentions for the last 5 years, using query begin_date 1rt January of year, end_date 31rt Dec of the year.
+
+
+```{r}
+#adapted from Antrhospace
+#Retrieving publishing dates
+api <- "41c2c399517f406abd9e839f4c0a7117" #<<<<<<<<<<<<<===== API key goes here
+
+#Query
+q <- "science" 
+records <- 500 
+pageRange <- 0:(records/10-1)
+
+begin_date <- "20180101"
+end_date <- "20180429"
+
+#  get data 
+dat2018 <- c()
+for (i in pageRange) {
+  # concatenate URL for each page
+  uri <- paste0("http://api.nytimes.com/svc/search/v2/articlesearch.json?q=", q, "&begin_date=",begin_date,"&end_date=",end_date, "&page=", i, "&fl=pub_date&api-key=", api)
+  d <- getURL(uri)
+  res <- fromJSON(d,simplify = FALSE)
+  dat2018 <- append(dat2018, unlist(res$response$docs))  # convert the dates to a vector and append
+}
+```
+and so forth...
+```{r}
+dat<- c(dat2018, dat2017, dat2016, dat2015, dat2014, dat2013 )
+# establish date range
+dat.conv <- strptime(dat, format="%Y-%m-%d") # need to convert dat into POSIX format
+daterange <- c(min(dat.conv, na.rm=TRUE), max(dat.conv, na.rm=TRUE))
+dat.all <- seq(daterange[1], daterange[2], by="day") # all possible days
+
+# aggregate counts for dates and coerce into a data frame
+cts <- as.data.frame(table(dat))
+
+# compare dates from counts dataframe with the whole data range
+# assign 0 where there is no count, otherwise take count
+# (take out PSD at the end to make it comparable)
+dat.all <- strptime(dat.all, format="%Y-%m-%d")
+# can't seem to be able to compare Posix objects with %in%, so coerce them to character for this:
+freqs <- ifelse(as.character(dat.all) %in% as.character(strptime(cts$dat, format="%Y-%m-%d")), cts$Freq, 0)
+plot (freqs, type="l", xaxt="n", main=paste("Search term(s):",q), ylab="# of articles", xlab="date")
+axis(1, 1:length(freqs), dat.all)
+lines(lowess(freqs, f=.2), col = 2)
+```
+Lowess line shows increase in mentions!!
